@@ -1,0 +1,5 @@
+{
+  "name": "DirectorAI Workstation",
+  "description": "A professional Human-in-the-Loop AI video production platform. Features script-to-structure parsing via Gemini, asset consistency locking, and visual storyboard management.",
+  "requestFramePermissions": []
+}
