@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { parseScriptWithGemini } from '../services/geminiService';
 import { Asset, Shot, ScriptSegment, AssetUsageLog, ParsingRule } from '../types';
-import { Bot, Loader2, Sparkles, Save, Plus, Trash2, Code, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Bot, Loader2, Sparkles, Save, Plus, Trash2, Code, CheckCircle2, AlertCircle, Edit3, X } from 'lucide-react';
 import { backend } from '../services/mockBackend';
 
 interface ScriptParserProps {
@@ -12,19 +12,21 @@ interface ScriptParserProps {
 }
 
 export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSegment, onExtractAssets }) => {
-  // Script State
+  // --- Script State ---
   const [script, setScript] = useState(segment.scriptRaw);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Rules State
+  // --- Rules State ---
   const [rules, setRules] = useState<ParsingRule[]>([]);
   const [selectedRuleId, setSelectedRuleId] = useState<string>('default');
   
-  // Rule Editor State
-  const [editingRule, setEditingRule] = useState<ParsingRule | null>(null);
+  // --- Editor State ---
+  // If editingRule is null, we are just viewing. If set, we are editing.
+  // For simplicity in this layout, we always show the editor for the selected rule.
+  const [localRuleState, setLocalRuleState] = useState<ParsingRule | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   // Sync internal state if parent changes segment
   useEffect(() => {
@@ -36,13 +38,13 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
       loadRules();
   }, []);
 
-  // When selected rule changes, update the editor
+  // When selected rule changes, load it into local editor state
   useEffect(() => {
       const rule = rules.find(r => r.id === selectedRuleId);
       if (rule) {
-          setEditingRule({ ...rule });
+          setLocalRuleState({ ...rule });
           setHasUnsavedChanges(false);
-          setSaveStatus('saved');
+          setSaveStatus('idle');
       }
   }, [selectedRuleId, rules]);
 
@@ -50,7 +52,7 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
       const list = await backend.listParsingRules();
       setRules(list);
       // Ensure selected ID is valid
-      if (!list.find(r => r.id === selectedRuleId)) {
+      if (selectedRuleId && !list.find(r => r.id === selectedRuleId)) {
           setSelectedRuleId(list[0]?.id || 'default');
       }
   };
@@ -59,12 +61,12 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
       onUpdateSegment({ scriptRaw: script });
   };
 
-  // --- Rule Management ---
+  // --- Rule Logic ---
 
   const handleCreateRule = async () => {
       const newRule: ParsingRule = {
           id: `rule_${Date.now()}`,
-          name: '新自定义规则',
+          name: 'New Custom Rule',
           systemInstruction: rules.find(r => r.isDefault)?.systemInstruction || '',
           isDefault: false
       };
@@ -74,37 +76,32 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
   };
 
   const handleDeleteRule = async (id: string) => {
-      if (confirm("确定要删除此规则吗？此操作无法恢复。")) {
+      if (confirm("确定要删除此规则吗？")) {
           await backend.deleteParsingRule(id);
           const remaining = await backend.listParsingRules();
           setRules(remaining);
-          if (selectedRuleId === id) {
-              setSelectedRuleId(remaining[0]?.id || 'default');
-          }
+          setSelectedRuleId(remaining[0]?.id || 'default');
       }
   };
 
-  const handleRuleEditChange = (field: keyof ParsingRule, value: any) => {
-      if (!editingRule) return;
-      setEditingRule({ ...editingRule, [field]: value });
+  const handleEditorChange = (field: keyof ParsingRule, value: any) => {
+      if (!localRuleState) return;
+      setLocalRuleState({ ...localRuleState, [field]: value });
       setHasUnsavedChanges(true);
-      setSaveStatus('unsaved');
+      setSaveStatus('idle');
   };
 
   const handleSaveRule = async () => {
-      if (!editingRule) return;
-      if (!editingRule.name.trim()) {
-          alert("规则名称不能为空");
-          return;
-      }
+      if (!localRuleState) return;
       setSaveStatus('saving');
-      await backend.saveParsingRule(editingRule);
-      await loadRules(); // Reload to update list
+      await backend.saveParsingRule(localRuleState);
+      await loadRules();
       setHasUnsavedChanges(false);
       setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
   };
 
-  // --- Analysis ---
+  // --- Analysis Logic ---
 
   const handleAnalyze = async () => {
     if (!script.trim()) {
@@ -112,7 +109,7 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
         return;
     }
     
-    // Auto-save rule if modified before analyzing
+    // Auto-save rule if dirty
     if (hasUnsavedChanges) {
         await handleSaveRule();
     }
@@ -120,15 +117,15 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
     setLoading(true);
     setError(null);
 
-    // Use the currently editing rule (which is now saved) or find by ID
-    const activeRule = editingRule || rules.find(r => r.id === selectedRuleId);
+    // Use local state if active, otherwise find from list
+    const activeInstruction = localRuleState?.systemInstruction;
 
     try {
       // 1. Save Raw Script
       onUpdateSegment({ scriptRaw: script });
 
-      // 2. Call AI with selected rule
-      const data = await parseScriptWithGemini(script, activeRule?.systemInstruction);
+      // 2. Call AI
+      const data = await parseScriptWithGemini(script, activeInstruction);
       
       if (!data) throw new Error("AI 未返回有效数据");
 
@@ -181,7 +178,7 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
 
     } catch (err) {
       console.error(err);
-      setError("解析失败，请检查网络或 API Key。");
+      setError("解析失败，请检查网络配置或 Key。");
     } finally {
       setLoading(false);
     }
@@ -190,30 +187,31 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
   return (
     <div className="flex h-full bg-slate-950 text-slate-100 overflow-hidden">
       
-      {/* LEFT: Main Script Area */}
-      <div className="flex-1 flex flex-col p-6 min-w-0">
-          <div className="mb-4 flex justify-between items-end">
-            <div>
-                <h1 className="text-2xl font-bold flex items-center gap-2">
+      {/* LEFT COLUMN: Script Input */}
+      <div className="flex-1 flex flex-col p-6 min-w-0 border-r border-slate-800">
+          <div className="mb-4">
+            <h1 className="text-2xl font-bold flex items-center gap-2">
                 <Bot className="w-6 h-6 text-blue-400" />
                 脚本解析引擎
-                </h1>
-                <p className="text-slate-400 text-sm mt-1">
+            </h1>
+            <p className="text-slate-400 text-sm mt-1">
                 当前章节: <span className="text-white font-bold">{segment.name}</span>
-                </p>
-            </div>
+            </p>
           </div>
 
           <div className="flex-1 flex flex-col gap-4 relative min-h-0">
-            <textarea
-                className="flex-1 w-full bg-slate-900 border border-slate-700 rounded-xl p-6 text-lg font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none shadow-inner leading-relaxed placeholder-slate-600"
-                placeholder="在此输入本章节的剧本内容..."
-                value={script}
-                onChange={(e) => setScript(e.target.value)}
-                onBlur={handleSaveText}
-            />
+            <div className="flex-1 relative group">
+                <textarea
+                    className="w-full h-full bg-slate-900 border border-slate-700 rounded-xl p-6 text-lg font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none shadow-inner leading-relaxed placeholder-slate-600"
+                    placeholder="在此输入本章节的剧本内容..."
+                    value={script}
+                    onChange={(e) => setScript(e.target.value)}
+                    onBlur={handleSaveText}
+                />
+            </div>
+            
             {error && (
-                <div className="bg-red-900/80 text-white px-4 py-2 rounded shadow flex items-center gap-2">
+                <div className="bg-red-900/80 text-white px-4 py-2 rounded shadow flex items-center gap-2 animate-pulse">
                    <AlertCircle className="w-4 h-4" /> {error}
                 </div>
             )}
@@ -222,118 +220,133 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
                 onClick={handleAnalyze}
                 disabled={loading}
                 className={`
-                py-3 px-8 rounded-lg font-bold text-lg shadow-lg flex items-center justify-center gap-3 transition-all
+                py-4 px-8 rounded-lg font-bold text-lg shadow-lg flex items-center justify-center gap-3 transition-all
                 ${loading 
-                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed' 
-                    : 'bg-blue-600 hover:bg-blue-500 text-white'}
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700' 
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white transform hover:-translate-y-1'}
                 `}
             >
                 {loading ? (
                 <>
                     <Loader2 className="animate-spin w-5 h-5" />
-                    正在分析章节...
+                    正在分析...
                 </>
                 ) : (
                 <>
                     <Sparkles className="w-5 h-5" />
-                    使用当前规则提取资产 & 分镜
+                    使用选定规则解析
                 </>
                 )}
             </button>
           </div>
       </div>
 
-      {/* RIGHT: Parsing Rules Sidebar */}
-      <div className="w-96 bg-slate-900 border-l border-slate-700 flex flex-col shadow-2xl z-10">
-          {/* Sidebar Header */}
-          <div className="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center">
-              <h3 className="font-bold flex items-center gap-2 text-slate-200">
+      {/* RIGHT COLUMN: Rule Manager Sidebar */}
+      <div className="w-96 flex flex-col bg-slate-900 shadow-2xl z-10 flex-shrink-0">
+          
+          {/* Header */}
+          <div className="p-4 border-b border-slate-700 bg-slate-900 flex justify-between items-center">
+              <div className="flex items-center gap-2 text-slate-200 font-bold">
                   <Code className="w-4 h-4 text-purple-400" />
                   解析规则库
-              </h3>
+              </div>
               <button 
                 onClick={handleCreateRule}
-                className="p-1.5 bg-slate-800 hover:bg-blue-600 rounded-md text-slate-400 hover:text-white transition-colors"
+                className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white transition-colors shadow-sm"
                 title="新建规则"
               >
                   <Plus className="w-4 h-4" />
               </button>
           </div>
 
-          {/* Rules List */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1 bg-slate-900/50 max-h-[30vh] border-b border-slate-800">
+          {/* Rule List */}
+          <div className="h-48 overflow-y-auto border-b border-slate-700 bg-slate-800/30 p-2 space-y-1 custom-scrollbar">
               {rules.map(rule => (
                   <button
                     key={rule.id}
                     onClick={() => setSelectedRuleId(rule.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg text-sm flex items-center justify-between group transition-all
-                        ${selectedRuleId === rule.id ? 'bg-blue-900/30 border border-blue-500/50 text-white' : 'text-slate-400 hover:bg-slate-800 border border-transparent'}
+                    className={`w-full text-left px-3 py-2 rounded-md text-xs flex items-center justify-between group transition-all
+                        ${selectedRuleId === rule.id ? 'bg-blue-900/40 border border-blue-500/50 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800 border border-transparent'}
                     `}
                   >
-                      <div className="truncate pr-2 font-medium">{rule.name}</div>
-                      {rule.isDefault && <span className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">默认</span>}
+                      <div className="flex items-center gap-2 truncate">
+                          <span className={`w-1.5 h-1.5 rounded-full ${selectedRuleId === rule.id ? 'bg-blue-400' : 'bg-slate-600'}`} />
+                          <span className="truncate max-w-[180px]">{rule.name}</span>
+                      </div>
+                      {rule.isDefault && <span className="text-[10px] bg-slate-700 px-1 py-0.5 rounded text-slate-300">Default</span>}
                   </button>
               ))}
           </div>
 
-          {/* Rule Editor (Code View) */}
-          <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
-              {editingRule ? (
-                  <div className="flex-1 flex flex-col p-4 gap-3">
-                      <div className="flex justify-between items-center">
-                          <label className="text-xs font-bold text-slate-500 uppercase">规则名称</label>
-                          <div className="flex gap-2">
-                             {!editingRule.isDefault && (
-                                <button 
-                                    onClick={() => handleDeleteRule(editingRule.id)}
-                                    className="text-slate-600 hover:text-red-400 p-1"
-                                    title="删除规则"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                             )}
-                          </div>
-                      </div>
-                      <input 
-                        className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 focus:border-blue-500 outline-none"
-                        value={editingRule.name}
-                        onChange={(e) => handleRuleEditChange('name', e.target.value)}
-                        placeholder="输入规则名称..."
-                      />
+          {/* Rule Editor Area */}
+          <div className="flex-1 flex flex-col min-h-0 bg-slate-950 flex flex-col">
+              {localRuleState ? (
+                  <>
+                    <div className="p-4 space-y-4 flex-1 overflow-y-auto custom-scrollbar">
+                        {/* Name Input */}
+                        <div>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">规则名称</label>
+                                {!localRuleState.isDefault && (
+                                    <button onClick={() => handleDeleteRule(localRuleState.id)} className="text-slate-600 hover:text-red-400" title="删除">
+                                        <Trash2 className="w-3 h-3" />
+                                    </button>
+                                )}
+                            </div>
+                            <input 
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 outline-none transition-colors"
+                                value={localRuleState.name}
+                                onChange={(e) => handleEditorChange('name', e.target.value)}
+                            />
+                        </div>
 
-                      <div className="flex justify-between items-center mt-2">
-                          <label className="text-xs font-bold text-slate-500 uppercase">System Prompt (Prompt 代码)</label>
-                          {hasUnsavedChanges ? (
-                              <span className="text-[10px] text-yellow-500 animate-pulse">● 未保存</span>
-                          ) : (
-                              <span className="text-[10px] text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> 已同步</span>
-                          )}
-                      </div>
-                      <div className="flex-1 relative group">
-                          <textarea 
-                            className="w-full h-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs font-mono text-blue-200 resize-none focus:ring-1 focus:ring-blue-500 focus:outline-none leading-relaxed"
-                            value={editingRule.systemInstruction}
-                            onChange={(e) => handleRuleEditChange('systemInstruction', e.target.value)}
-                            spellCheck={false}
-                          />
-                      </div>
-                      
-                      <button 
-                        onClick={handleSaveRule}
-                        disabled={!hasUnsavedChanges && saveStatus === 'saved'}
-                        className={`w-full py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all
-                            ${hasUnsavedChanges 
-                                ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20' 
-                                : 'bg-slate-800 text-slate-500 cursor-default'}
-                        `}
-                      >
-                         <Save className="w-4 h-4" />
-                         {saveStatus === 'saving' ? '保存中...' : '保存修改'}
-                      </button>
-                  </div>
+                        {/* System Prompt Editor */}
+                        <div className="flex-1 flex flex-col">
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                                    System Instruction <Code className="w-3 h-3" />
+                                </label>
+                            </div>
+                            <div className="relative flex-1 min-h-[300px]">
+                                <textarea 
+                                    className="absolute inset-0 w-full h-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-xs font-mono text-emerald-300 resize-none focus:ring-1 focus:ring-blue-500 focus:outline-none leading-relaxed custom-scrollbar"
+                                    value={localRuleState.systemInstruction}
+                                    onChange={(e) => handleEditorChange('systemInstruction', e.target.value)}
+                                    spellCheck={false}
+                                />
+                            </div>
+                            <p className="text-[10px] text-slate-600 mt-2">
+                                提示: 定义 AI 如何理解分镜、提取资产以及转换视觉提示词。
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Footer Actions */}
+                    <div className="p-4 border-t border-slate-800 bg-slate-900 flex items-center justify-between">
+                        <div className="text-xs">
+                             {hasUnsavedChanges ? (
+                                  <span className="text-yellow-500 font-bold flex items-center gap-1">● 未保存</span>
+                              ) : (
+                                  <span className="text-slate-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> 已同步</span>
+                              )}
+                        </div>
+                        <button 
+                            onClick={handleSaveRule}
+                            disabled={!hasUnsavedChanges && saveStatus === 'idle'}
+                            className={`px-4 py-2 rounded text-xs font-bold flex items-center gap-2 transition-all
+                                ${hasUnsavedChanges 
+                                    ? 'bg-blue-600 hover:bg-blue-500 text-white' 
+                                    : saveStatus === 'saved' ? 'bg-green-600 text-white' : 'bg-slate-800 text-slate-500'}
+                            `}
+                        >
+                            {saveStatus === 'saving' ? <Loader2 className="w-3 h-3 animate-spin"/> : <Save className="w-3 h-3" />}
+                            {saveStatus === 'saving' ? '保存中...' : saveStatus === 'saved' ? '已保存' : '保存修改'}
+                        </button>
+                    </div>
+                  </>
               ) : (
                   <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">
-                      请选择一个规则进行编辑
+                      Select a rule to edit
                   </div>
               )}
           </div>
@@ -341,3 +354,4 @@ export const ScriptParser: React.FC<ScriptParserProps> = ({ segment, onUpdateSeg
     </div>
   );
 };
+    
