@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Bot, Layers, Layout, Clapperboard, Settings as SettingsIcon, ArrowLeft, Plus, Folder, FileText, ChevronDown } from 'lucide-react';
+import { Bot, Layers, Layout, Clapperboard, Settings as SettingsIcon, ArrowLeft, Plus, FileText } from 'lucide-react';
 import { ScriptParser } from './components/ScriptParser';
 import { AssetHub } from './components/AssetHub';
 import { VisualStoryboard } from './components/VisualStoryboard';
@@ -25,23 +25,46 @@ const App: React.FC = () => {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   
-  // Mock Global Assets (Shared across all projects in a real app, but here just local state for demo)
-  const [globalAssets, setGlobalAssets] = useState<Asset[]>([
-      { id: 'g1', name: '预设：赛博侦探', type: 'CHARACTER', description: 'Sample', visualPrompt: '1boy, detective, cyberpunk', tags: ['Demo'], scope: 'GLOBAL', status: 'LOCKED', referenceImage: 'https://picsum.photos/seed/det/400/400' },
-  ]);
+  // Global Assets State (Persisted in LocalStorage for demo purposes)
+  const [globalAssets, setGlobalAssets] = useState<Asset[]>([]);
 
+  // Load Settings & Global Assets on Mount
   useEffect(() => {
-    const saved = localStorage.getItem('directorai_settings');
-    if (saved) {
-      try { setSettings(JSON.parse(saved)); } catch (e) {}
+    const savedSettings = localStorage.getItem('directorai_settings');
+    if (savedSettings) {
+      try { setSettings(JSON.parse(savedSettings)); } catch (e) {}
+    }
+
+    const savedGlobalAssets = localStorage.getItem('directorai_global_assets');
+    if (savedGlobalAssets) {
+        try { setGlobalAssets(JSON.parse(savedGlobalAssets)); } catch (e) {}
+    } else {
+        // Default Mock Asset
+        setGlobalAssets([{ 
+            id: 'g1', 
+            name: '预设：赛博侦探', 
+            type: 'CHARACTER', 
+            description: 'Sample', 
+            visualPrompt: '1boy, detective, cyberpunk', 
+            tags: ['Demo'], 
+            scope: 'GLOBAL', 
+            status: 'LOCKED', 
+            referenceImage: 'https://picsum.photos/seed/det/400/400' 
+        }]);
     }
   }, []);
 
+  // Auto-save Project
   useEffect(() => {
     if (currentProject && settings.autoSave) {
        backend.updateProject(currentProject);
     }
   }, [currentProject, settings.autoSave]);
+
+  // Persist Global Assets when changed
+  useEffect(() => {
+      localStorage.setItem('directorai_global_assets', JSON.stringify(globalAssets));
+  }, [globalAssets]);
 
   // --- Dashboard Logic ---
 
@@ -76,7 +99,7 @@ const App: React.FC = () => {
       if (!currentProject) return;
       const newSeg: ScriptSegment = {
           id: `seg_${Date.now()}`,
-          name: `第 ${currentProject.segments.length + 1} 章 (New Chapter)`,
+          name: `第 ${currentProject.segments.length + 1} 章`,
           scriptRaw: '',
           shots: [],
           lastModified: Date.now()
@@ -113,6 +136,11 @@ const App: React.FC = () => {
   };
 
   const handleAddToGlobal = (asset: Asset) => {
+      // Check for duplicates
+      if (globalAssets.some(g => g.name === asset.name && g.type === asset.type)) {
+          alert("全局库中已存在同名资产");
+          return;
+      }
       setGlobalAssets(prev => [...prev, { ...asset, id: `g_${Date.now()}`, scope: 'GLOBAL', projectId: undefined }]);
       alert("已存入全局资产库");
   };
